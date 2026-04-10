@@ -2,7 +2,12 @@ const BinaryAscii = require("./utils/binary");
 const EcdsaCurve = require("./curve");
 const Point = require("./point").Point;
 const der = require("./utils/der");
-const Math = require("./math");
+const EcdsaMath = require("./math");
+const BigInt = require("big-integer");
+
+
+const _evenTag = "02";
+const _oddTag = "03";
 
 
 class PublicKey {
@@ -13,12 +18,20 @@ class PublicKey {
     };
 
     toString (encoded=false) {
-        let xString = BinaryAscii.stringFromNumber(this.point.x, this.curve.length());
-        let yString = BinaryAscii.stringFromNumber(this.point.y, this.curve.length());
+        let baseLen = this.curve.length();
+        let xString = BinaryAscii.stringFromNumber(this.point.x, baseLen);
+        let yString = BinaryAscii.stringFromNumber(this.point.y, baseLen);
         if (encoded) {
             return "\x00\x04" + xString + yString;
         }
         return xString + yString;
+    };
+
+    toCompressed () {
+        let baseLength = 2 * this.curve.length();
+        let parityTag = this.point.y.mod(2).eq(0) ? _evenTag : _oddTag;
+        let xHex = this.point.x.toString(16).padStart(baseLength, "0");
+        return parityTag + xHex;
     };
 
     toDer () {
@@ -57,17 +70,7 @@ class PublicKey {
             throw new Error("trailing junk after DER public key objects: " + BinaryAscii.hexFromBinary(empty));
         };
 
-        let curve = EcdsaCurve.curvesByOid[oidCurve];
-        if (!curve) {
-            let supportedCurvesNames = [];
-            EcdsaCurve.supportedCurves.forEach((x) => {supportedCurvesNames.push(x.name)})
-            throw new Error(
-                "Unknown curve with oid "
-                + oidCurve
-                + ". Only the following are available: "
-                + supportedCurvesNames
-            );
-        };
+        let curve = EcdsaCurve.getByOid(oidCurve);
 
         result = der.removeBitString(pointBitString);
         let pointStr = result[0];
@@ -97,10 +100,21 @@ class PublicKey {
         if (!curve.contains(p)) {
             throw new Error("point (" + p.x + "," + p.y + ") is not valid for curve " + curve.name);
         }
-        if (!Math.multiply(p, curve.N, curve.N, curve.A, curve.P).isAtInfinity()) {
+        if (!EcdsaMath.multiply(p, curve.N, curve.N, curve.A, curve.P).isAtInfinity()) {
             throw new Error("Point (" + p.x + "," + p.y + " * " + curve.name + ".N is not at infinity");
         }
         return publicKey
+    };
+
+    static fromCompressed (string, curve=EcdsaCurve.secp256k1) {
+        let parityTag = string.slice(0, 2);
+        let xHex = string.slice(2);
+        if (parityTag !== _evenTag && parityTag !== _oddTag) {
+            throw new Error("Compressed string should start with 02 or 03");
+        }
+        let x = BigInt(xHex, 16);
+        let y = curve.y(x, parityTag === _evenTag);
+        return new PublicKey(new Point(x, y), curve);
     };
 };
 

@@ -33,8 +33,15 @@ var numberFromString = function (string) {
 }
 
 
-var numberFromHex = function (string) {
-    return BigInt(string, 16);
+var numberFromHex = function (string, bitLength=null) {
+    let number = BigInt(string, 16);
+    if (bitLength !== null) {
+        let hashBitLen = string.length * 4;
+        if (hashBitLen > bitLength) {
+            number = number.shiftRight(hashBitLen - bitLength);
+        }
+    }
+    return number;
 }
 
 

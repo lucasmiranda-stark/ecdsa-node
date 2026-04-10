@@ -85,16 +85,7 @@ class PrivateKey {
             throw new Error("trailing junk after DER private key curve_oid: " + BinaryAscii.hexFromBinary(empty));
         };
 
-        let curve = EcdsaCurve.curvesByOid[oidCurve];
-
-        if (!curve) {
-            let supportedCurvesNames = [];
-            EcdsaCurve.supportedCurves.forEach((x) => {supportedCurvesNames.push(x.name)})
-            throw new Error(
-                "Unknown curve with oid " + oidCurve
-                + ". Only the following are available: " + supportedCurvesNames
-            );
-        };
+        let curve = EcdsaCurve.getByOid(oidCurve);
 
         if (privateKeyStr.length < curve.length()) {
             privateKeyStr = hexAt.repeat(curve.length() - privateKeyStr.length) + privateKeyStr;

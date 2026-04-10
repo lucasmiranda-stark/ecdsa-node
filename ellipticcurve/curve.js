@@ -7,6 +7,7 @@
 const BigInt = require("big-integer");
 const Point = require("./point").Point;
 const modulo = require("./utils/integer").modulo;
+const EcdsaMath = require("./math");
 
 
 class CurveFp {
@@ -22,13 +23,13 @@ class CurveFp {
     };
 
     contains(p) {
-        if (p.x < 0 || p.x > this.P.minus(1)) {
+        if (p.x.lesser(0) || p.x.greater(this.P.minus(1))) {
             return false;
         }
-        if (p.y < 0 || p.y > this.P.minus(1)) {
+        if (p.y.lesser(0) || p.y.greater(this.P.minus(1))) {
             return false;
         }
-        if (!modulo(((p.y.pow(2)).minus((p.x.pow(3)).add(this.A.multiply(p.x)).add(this.B))), this.P).equals(0)) {
+        if (!modulo(p.y.multiply(p.y).minus(p.x.pow(3).add(this.A.multiply(p.x)).add(this.B)), this.P).eq(0)) {
             return false;
         }
         return true;
@@ -36,6 +37,15 @@ class CurveFp {
 
     length() {
         return Math.floor((1 + this.N.toString(16).length) / 2);
+    };
+
+    y(x, isEven) {
+        let ySquared = modulo(x.modPow(BigInt(3), this.P).add(this.A.multiply(x)).add(this.B), this.P);
+        let y = EcdsaMath.modularSquareRoot(ySquared, this.P);
+        if (isEven !== y.mod(2).eq(0)) {
+            y = this.P.minus(y);
+        }
+        return y;
     };
 
     get oid() {
@@ -69,18 +79,42 @@ let prime256v1 = new CurveFp(
 
 let p256 = prime256v1;
 
+let _curvesByOid = {};
+
+function addCurve(curve) {
+    _curvesByOid[curve.oid] = curve;
+}
+
+function getByOid(oid) {
+    let curve = _curvesByOid[oid];
+    if (!curve) {
+        let names = Object.values(_curvesByOid).map((c) => c.name);
+        throw new Error(
+            "Unknown curve with oid " + oid
+            + ". Only the following are registered: " + names.join(", ")
+        );
+    }
+    return curve;
+}
+
+addCurve(secp256k1);
+addCurve(prime256v1);
+
 let supportedCurves = [
     secp256k1,
     prime256v1,
 ];
 
+// Legacy compat: curvesByOid dict
 let curvesByOid = {};
 supportedCurves.forEach((curve) => {curvesByOid[curve.oid] = curve});
 
 
 exports.CurveFp = CurveFp;
 exports.curvesByOid = curvesByOid;
-exports.secp256k1 = secp256k1
-exports.prime256v1 = prime256v1
-exports.p256 = p256
+exports.secp256k1 = secp256k1;
+exports.prime256v1 = prime256v1;
+exports.p256 = p256;
 exports.supportedCurves = supportedCurves;
+exports.add = addCurve;
+exports.getByOid = getByOid;

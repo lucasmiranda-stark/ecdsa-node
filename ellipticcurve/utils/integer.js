@@ -2,6 +2,7 @@
 
 const BigInt = require("big-integer");
 const crypto = require("crypto");
+const BinaryAscii = require("./binary");
 
 
 function modulo(x, n) {
@@ -56,14 +57,6 @@ function secureRandomNumber(minimum, maximum) { // bigint, bigint
         throw new Error("The maximum value must be higher than the minimum value.")
     };
 
-    /* We hardcode the values for the following:
-        *
-        *   https://developer.mozilla.org/en/docs/Web/JavaScript/Reference/Global_Objects/Number/MIN_SAFE_INTEGER
-        *   https://developer.mozilla.org/en/docs/Web/JavaScript/Reference/Global_Objects/Number/MAX_SAFE_INTEGER
-        *
-        * ... as Babel does not appear to transpile them, despite being ES6.
-        */
-
     let range = maximum.minus(minimum);
 
     let {bitsNeeded, bytesNeeded, mask} = calculateParameters(range);
@@ -77,37 +70,92 @@ function secureRandomNumber(minimum, maximum) { // bigint, bigint
         randomValue = randomValue.or(BigInt(randomBytes[i]).shiftLeft(BigInt(8).multiply(i)));
     }
 
-    /* We apply the mask to reduce the amount of attempts we might need
-        * to make to get a number that is in range. This is somewhat like
-        * the commonly used 'modulo trick', but without the bias:
-        *
-        *   "Let's say you invoke secure_rand(0, 60). When the other code
-        *    generates a random integer, you might get 243. If you take
-        *    (243 & 63)-- noting that the mask is 63-- you get 51. Since
-        *    51 is less than 60, we can return this without bias. If we
-        *    got 255, then 255 & 63 is 63. 63 > 60, so we try again.
-        *
-        *    The purpose of the mask is to reduce the number of random
-        *    numbers discarded for the sake of ensuring an unbiased
-        *    distribution. In the example above, 243 would discard, but
-        *    (243 & 63) is in the range of 0 and 60."
-        *
-        *   (Source: Scott Arciszewski)
-        */
-
     randomValue = randomValue.and(mask);
 
     if (randomValue.lesserOrEquals(range)) {
-        /* We've been working with 0 as a starting point, so we need to
-            * add the `minimum` here. */
         return minimum.add(randomValue);
     }
 
-    /* Outside of the acceptable range, throw it away and try again.
-        * We don't try any modulo tricks, as this would introduce bias. */
     return secureRandomNumber(minimum, maximum);
 };
 
 
+function rfc6979(hashBytes, secret, curve, hashfunc) {
+    /**
+     * Generate deterministic nonce values per RFC 6979.
+     * Returns an iterator that yields BigInt nonce candidates.
+     *
+     * :param hashBytes: Buffer of hashed message bytes
+     * :param secret: BigInt private key secret
+     * :param curve: curve object with N
+     * :param hashfunc: hash function name string (e.g. "sha256")
+     */
+    let orderBitLen = curve.N.bitLength().toJSNumber();
+    let orderByteLen = Math.ceil(orderBitLen / 8);
+
+    let secretHex = secret.toString(16).padStart(orderByteLen * 2, "0");
+    let secretBytes = Buffer.from(secretHex, "hex");
+
+    let hashReduced = modulo(BinaryAscii.numberFromHex(hashBytes.toString("hex"), orderBitLen), curve.N);
+    let hashHex = hashReduced.toString(16).padStart(orderByteLen * 2, "0");
+    let hashOctets = Buffer.from(hashHex, "hex");
+
+    let hLen = _hashDigestSize(hashfunc);
+    let V = Buffer.alloc(hLen, 0x01);
+    let K = Buffer.alloc(hLen, 0x00);
+
+    K = _hmac(hashfunc, K, Buffer.concat([V, Buffer.from([0x00]), secretBytes, hashOctets]));
+    V = _hmac(hashfunc, K, V);
+    K = _hmac(hashfunc, K, Buffer.concat([V, Buffer.from([0x01]), secretBytes, hashOctets]));
+    V = _hmac(hashfunc, K, V);
+
+    let results = [];
+    let done = false;
+
+    return {
+        next: function () {
+            while (true) {
+                let T = Buffer.alloc(0);
+                while (T.length * 8 < orderBitLen) {
+                    V = _hmac(hashfunc, K, V);
+                    T = Buffer.concat([T, V]);
+                }
+
+                let k = BinaryAscii.numberFromHex(T.toString("hex"), orderBitLen);
+
+                if (k.greaterOrEquals(1) && k.lesserOrEquals(curve.N.minus(1))) {
+                    return k;
+                }
+
+                K = _hmac(hashfunc, K, Buffer.concat([V, Buffer.from([0x00])]));
+                V = _hmac(hashfunc, K, V);
+            }
+        }
+    };
+}
+
+
+function _hmac(hashfunc, key, data) {
+    let alg = _resolveHashAlgorithm(hashfunc);
+    return crypto.createHmac(alg, key).update(data).digest();
+}
+
+
+function _hashDigestSize(hashfunc) {
+    let alg = _resolveHashAlgorithm(hashfunc);
+    return crypto.createHash(alg).digest().length;
+}
+
+
+function _resolveHashAlgorithm(hashfunc) {
+    if (typeof hashfunc === "string") {
+        return hashfunc;
+    }
+    // default to sha256
+    return "sha256";
+}
+
+
 exports.between = secureRandomNumber;
 exports.modulo = modulo;
+exports.rfc6979 = rfc6979;
