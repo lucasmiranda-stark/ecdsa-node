@@ -63,6 +63,7 @@ exports.encodeInteger = function (x) {
 
 
 exports.encodeOid = function (pieces) {
+    pieces = pieces.slice();
     let first = pieces.shift();
     let second = pieces.shift();
 

@@ -6,11 +6,12 @@
 
 const BigInt = require("big-integer");
 const Point = require("./point").Point;
-const modulo = require("./utils/integer").modulo;
+const {modulo} = require("./utils/integer");
 const EcdsaMath = require("./math");
 
 
 class CurveFp {
+
     constructor(A, B, P, N, Gx, Gy, name, oid, nistName=null) {
         this.A = A;
         this.B = B;
@@ -19,7 +20,7 @@ class CurveFp {
         this.G = new Point(Gx, Gy);
         this.name = name;
         this.nistName = nistName;
-        this._oid = oid;
+        this.oid = oid;
     };
 
     contains(p) {
@@ -36,7 +37,7 @@ class CurveFp {
     };
 
     length() {
-        return Math.floor((1 + this.N.toString(16).length) / 2);
+        return (1 + this.N.toString(16).length) >> 1;
     };
 
     y(x, isEven) {
@@ -47,11 +48,28 @@ class CurveFp {
         }
         return y;
     };
-
-    get oid() {
-        return this._oid.slice();
-    }
 };
+
+
+let _curvesByOid = {};
+
+
+function add(curve) {
+    _curvesByOid[curve.oid] = curve;
+}
+
+
+function getByOid(oid) {
+    let curve = _curvesByOid[oid];
+    if (!curve) {
+        let names = Object.values(_curvesByOid).map((c) => c.name);
+        throw new Error(
+            "Unknown curve with oid " + oid
+            + "; The following are registered: " + names.join(", ")
+        );
+    }
+    return curve;
+}
 
 
 let secp256k1 = new CurveFp(
@@ -79,42 +97,13 @@ let prime256v1 = new CurveFp(
 
 let p256 = prime256v1;
 
-let _curvesByOid = {};
-
-function addCurve(curve) {
-    _curvesByOid[curve.oid] = curve;
-}
-
-function getByOid(oid) {
-    let curve = _curvesByOid[oid];
-    if (!curve) {
-        let names = Object.values(_curvesByOid).map((c) => c.name);
-        throw new Error(
-            "Unknown curve with oid " + oid
-            + ". Only the following are registered: " + names.join(", ")
-        );
-    }
-    return curve;
-}
-
-addCurve(secp256k1);
-addCurve(prime256v1);
-
-let supportedCurves = [
-    secp256k1,
-    prime256v1,
-];
-
-// Legacy compat: curvesByOid dict
-let curvesByOid = {};
-supportedCurves.forEach((curve) => {curvesByOid[curve.oid] = curve});
+add(secp256k1);
+add(prime256v1);
 
 
 exports.CurveFp = CurveFp;
-exports.curvesByOid = curvesByOid;
 exports.secp256k1 = secp256k1;
 exports.prime256v1 = prime256v1;
 exports.p256 = p256;
-exports.supportedCurves = supportedCurves;
-exports.add = addCurve;
+exports.add = add;
 exports.getByOid = getByOid;

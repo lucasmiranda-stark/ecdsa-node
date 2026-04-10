@@ -1,8 +1,8 @@
 const PublicKey = require("./publicKey").PublicKey;
-const RandomInteger = require("./utils/integer");
+const {RandomInteger} = require("./utils/integer");
 const BinaryAscii = require("./utils/binary");
 const EcdsaCurve = require("./curve");
-const EcdsaMath = require("./math");
+const Math = require("./math");
 const BigInt = require("big-integer");
 const der = require("./utils/der");
 
@@ -10,18 +10,15 @@ const hexAt = "\x00";
 
 
 class PrivateKey {
+
     constructor(curve=EcdsaCurve.secp256k1, secret=null) {
         this.curve = curve;
-        if (secret) {
-            this.secret = secret;
-        } else {
-            this.secret = RandomInteger.between(BigInt(1), curve.N.minus(1));
-        }
+        this.secret = secret || RandomInteger.between(BigInt(1), curve.N.minus(1));
     };
 
     publicKey () {
         let curve = this.curve;
-        let publicPoint = EcdsaMath.multiply(curve.G, this.secret, curve.N, curve.A, curve.P);
+        let publicPoint = Math.multiply(curve.G, this.secret, curve.N, curve.A, curve.P);
         return new PublicKey(publicPoint, curve);
     };
 

@@ -2,7 +2,7 @@ const BinaryAscii = require("./utils/binary");
 const EcdsaCurve = require("./curve");
 const Point = require("./point").Point;
 const der = require("./utils/der");
-const EcdsaMath = require("./math");
+const Math = require("./math");
 const BigInt = require("big-integer");
 
 
@@ -18,9 +18,9 @@ class PublicKey {
     };
 
     toString (encoded=false) {
-        let baseLen = this.curve.length();
-        let xString = BinaryAscii.stringFromNumber(this.point.x, baseLen);
-        let yString = BinaryAscii.stringFromNumber(this.point.y, baseLen);
+        let baseLength = this.curve.length();
+        let xString = BinaryAscii.stringFromNumber(this.point.x, baseLength);
+        let yString = BinaryAscii.stringFromNumber(this.point.y, baseLength);
         if (encoded) {
             return "\x00\x04" + xString + yString;
         }
@@ -83,10 +83,10 @@ class PublicKey {
     };
 
     static fromString (string, curve=EcdsaCurve.secp256k1, validatePoint=true) {
-        let baseLen = curve.length();
+        let baseLength = curve.length();
 
-        let xs = string.slice(null, baseLen);
-        let ys = string.slice(baseLen);
+        let xs = string.slice(null, baseLength);
+        let ys = string.slice(baseLength);
 
         let p = new Point(BinaryAscii.numberFromString(xs), BinaryAscii.numberFromString(ys));
 
@@ -100,7 +100,7 @@ class PublicKey {
         if (!curve.contains(p)) {
             throw new Error("point (" + p.x + "," + p.y + ") is not valid for curve " + curve.name);
         }
-        if (!EcdsaMath.multiply(p, curve.N, curve.N, curve.A, curve.P).isAtInfinity()) {
+        if (!Math.multiply(p, curve.N, curve.N, curve.A, curve.P).isAtInfinity()) {
             throw new Error("Point (" + p.x + "," + p.y + " * " + curve.name + ".N is not at infinity");
         }
         return publicKey

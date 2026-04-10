@@ -5,7 +5,7 @@ const der = require("./utils/der")
 
 class Signature {
 
-    constructor (r, s, recoveryId = 0) {
+    constructor (r, s, recoveryId = null) {
         this.r = r;
         this.s = s;
         this.recoveryId = recoveryId;
@@ -24,7 +24,7 @@ class Signature {
     }
 
     static fromDer (string, recoveryByte = false) {
-        let recoveryId = 0;
+        let recoveryId = null;
         if (recoveryByte) {
             if (typeof string[0] === "number") {
                 recoveryId = string[0];
