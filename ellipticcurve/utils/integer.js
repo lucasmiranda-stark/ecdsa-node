@@ -77,7 +77,10 @@ class RandomInteger {
 
     static rfc6979(hashBytes, secret, curve, hashfunc) {
         /**
-         * Generate deterministic nonce values per RFC 6979.
+         * Generate nonce values via hedged RFC 6979: deterministic k derivation
+         * with fresh random entropy mixed into K-init (RFC 6979 §3.6). Same
+         * message + key yield different signatures, while preserving RFC 6979's
+         * protection against RNG failures.
          * Returns an iterator that yields BigInt nonce candidates.
          */
         let orderBitLen = curve.N.bitLength().toJSNumber();
@@ -90,13 +93,15 @@ class RandomInteger {
         let hashHex = hashReduced.toString(16).padStart(orderByteLen * 2, "0");
         let hashOctets = Buffer.from(hashHex, "hex");
 
+        let extraEntropy = crypto.randomBytes(orderByteLen);
+
         let hLen = _hashDigestSize(hashfunc);
         let V = Buffer.alloc(hLen, 0x01);
         let K = Buffer.alloc(hLen, 0x00);
 
-        K = _hmac(hashfunc, K, Buffer.concat([V, Buffer.from([0x00]), secretBytes, hashOctets]));
+        K = _hmac(hashfunc, K, Buffer.concat([V, Buffer.from([0x00]), secretBytes, hashOctets, extraEntropy]));
         V = _hmac(hashfunc, K, V);
-        K = _hmac(hashfunc, K, Buffer.concat([V, Buffer.from([0x01]), secretBytes, hashOctets]));
+        K = _hmac(hashfunc, K, Buffer.concat([V, Buffer.from([0x01]), secretBytes, hashOctets, extraEntropy]));
         V = _hmac(hashfunc, K, V);
 
         return {

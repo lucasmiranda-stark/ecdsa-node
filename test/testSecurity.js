@@ -13,10 +13,9 @@ let secp256k1 = EcdsaCurve.secp256k1;
 let prime256v1 = EcdsaCurve.prime256v1;
 
 
-describe("Rfc6979KnownAnswerTest", function () {
-    // Test vectors from RFC 6979 Appendix A.2.5 (prime256v1/SHA-256).
-    // The r values match the RFC exactly; s values are low-S normalized
-    // (s = N - s when RFC s > N/2).
+describe("Prime256v1PublicKeyDerivationTest", function () {
+    // RFC 6979 A.2.5 public key derivation. Signatures are hedged, so r/s
+    // no longer match fixed test vectors, but pubkey derivation is unchanged.
     let privateKey, publicKey;
 
     before(function () {
@@ -40,44 +39,26 @@ describe("Rfc6979KnownAnswerTest", function () {
         });
     });
 
-    describe("#testSampleMessageSignature()", function () {
-        it("should produce correct 'sample' message signature", function () {
-            let sig = Ecdsa.sign("sample", privateKey);
-            // r matches RFC 6979 A.2.5 exactly
-            assert.equal(
-                sig.r.toString(16),
-                BigInt("EFD48B2AACB6A8FD1140DD9CD45E81D69D2C877B56AAF991C34D0EA84EAF3716", 16).toString(16),
-            );
-            // s is low-S normalized
-            assert.equal(
-                sig.s.toString(16),
-                BigInt("834E36AD29A83BF2BC9385E491D6099C8FDF9D1ED67AA7EA5F51F93782857A9", 16).toString(16),
-            );
-            assert.equal(Ecdsa.verify("sample", sig, publicKey), true);
+    describe("#testSampleMessageRoundTrip()", function () {
+        it("should sign 'sample' with low-S and verify", function () {
+            let signature = Ecdsa.sign("sample", privateKey);
+            assert.ok(signature.s.lesserOrEquals(prime256v1.N.over(2)));
+            assert.equal(Ecdsa.verify("sample", signature, publicKey), true);
         });
     });
 
-    describe("#testTestMessageSignature()", function () {
-        it("should produce correct 'test' message signature", function () {
-            let sig = Ecdsa.sign("test", privateKey);
-            // r matches RFC 6979 A.2.5 exactly
-            assert.equal(
-                sig.r.toString(16),
-                BigInt("F1ABB023518351CD71D881567B1EA663ED3EFCF6C5132B354F28D3B0B7D38367", 16).toString(16),
-            );
-            // s already low-S, matches RFC directly
-            assert.equal(
-                sig.s.toString(16),
-                BigInt("019F4113742A2B14BD25926B49C649155F267E60D3814B4C0CC84250E46F0083", 16).toString(16),
-            );
-            assert.equal(Ecdsa.verify("test", sig, publicKey), true);
+    describe("#testTestMessageRoundTrip()", function () {
+        it("should sign 'test' with low-S and verify", function () {
+            let signature = Ecdsa.sign("test", privateKey);
+            assert.ok(signature.s.lesserOrEquals(prime256v1.N.over(2)));
+            assert.equal(Ecdsa.verify("test", signature, publicKey), true);
         });
     });
 });
 
 
-describe("Secp256k1KnownAnswerTest", function () {
-    // Known-answer tests for secp256k1 with secret=1 (pubkey = generator G).
+describe("Secp256k1PublicKeyDerivationTest", function () {
+    // secp256k1 with secret=1 (pubkey = generator G).
     let privateKey, publicKey;
 
     before(function () {
@@ -92,33 +73,17 @@ describe("Secp256k1KnownAnswerTest", function () {
         });
     });
 
-    describe("#testSampleMessageSignature()", function () {
-        it("should produce correct 'sample' message signature", function () {
-            let sig = Ecdsa.sign("sample", privateKey);
-            assert.equal(
-                sig.r.toString(16),
-                BigInt("58DB657BCD631038BEA07B4941172F0167ACA98F12B55E3176BD1C35435D6501", 16).toString(16),
-            );
-            assert.equal(
-                sig.s.toString(16),
-                BigInt("3A78E73D8FF8AB554E13C10F6390D81A882F91945D6275493882676170B53A57", 16).toString(16),
-            );
-            assert.equal(Ecdsa.verify("sample", sig, publicKey), true);
+    describe("#testSampleMessageRoundTrip()", function () {
+        it("should sign 'sample' and verify", function () {
+            let signature = Ecdsa.sign("sample", privateKey);
+            assert.equal(Ecdsa.verify("sample", signature, publicKey), true);
         });
     });
 
-    describe("#testTestMessageSignature()", function () {
-        it("should produce correct 'test' message signature", function () {
-            let sig = Ecdsa.sign("test", privateKey);
-            assert.equal(
-                sig.r.toString(16),
-                BigInt("98DF3AAED18D1299109E9732E3015F7E68E5D1FDEAD6924809B410D970A3B0CE", 16).toString(16),
-            );
-            assert.equal(
-                sig.s.toString(16),
-                BigInt("3EF15987C6592379BAAD6392586A382D63952572632FCD951AE75E7471C144C6", 16).toString(16),
-            );
-            assert.equal(Ecdsa.verify("test", sig, publicKey), true);
+    describe("#testTestMessageRoundTrip()", function () {
+        it("should sign 'test' and verify", function () {
+            let signature = Ecdsa.sign("test", privateKey);
+            assert.equal(Ecdsa.verify("test", signature, publicKey), true);
         });
     });
 });
@@ -265,18 +230,17 @@ describe("ForgeryAttemptTest", function () {
 });
 
 
-describe("Rfc6979Test", function () {
+describe("HedgedSignatureTest", function () {
 
-    describe("#testDeterministicSignature()", function () {
-        it("should produce deterministic signatures", function () {
+    describe("#testSameInputsProduceDifferentSignatures()", function () {
+        it("should produce different signatures for the same message and key", function () {
             let privateKey = new PrivateKey();
             let message = "test message";
 
             let signature1 = Ecdsa.sign(message, privateKey);
             let signature2 = Ecdsa.sign(message, privateKey);
 
-            assert.equal(signature1.r.toString(16), signature2.r.toString(16));
-            assert.equal(signature1.s.toString(16), signature2.s.toString(16));
+            assert.ok(!signature1.r.eq(signature2.r) || !signature1.s.eq(signature2.s));
         });
     });
 
@@ -313,9 +277,9 @@ describe("EdgeCaseMessageTest", function () {
     });
 
     function signAndVerify(message) {
-        let sig = Ecdsa.sign(message, privateKey);
-        assert.equal(Ecdsa.verify(message, sig, publicKey), true);
-        assert.equal(Ecdsa.verify(message + "x", sig, publicKey), false);
+        let signature = Ecdsa.sign(message, privateKey);
+        assert.equal(Ecdsa.verify(message, signature, publicKey), true);
+        assert.equal(Ecdsa.verify(message + "x", signature, publicKey), false);
     }
 
     describe("#testEmptyMessage()", function () {
@@ -513,16 +477,15 @@ describe("HashTruncationTest", function () {
         });
     });
 
-    describe("#testSha512DeterministicSignature()", function () {
-        it("should produce deterministic sha512 signatures", function () {
+    describe("#testSha512SignaturesAreHedged()", function () {
+        it("should produce different sha512 signatures for the same message and key", function () {
             let privateKey = new PrivateKey();
             let message = "test message";
 
             let signature1 = Ecdsa.sign(message, privateKey, "sha512");
             let signature2 = Ecdsa.sign(message, privateKey, "sha512");
 
-            assert.equal(signature1.r.toString(16), signature2.r.toString(16));
-            assert.equal(signature1.s.toString(16), signature2.s.toString(16));
+            assert.ok(!signature1.r.eq(signature2.r) || !signature1.s.eq(signature2.s));
         });
     });
 
@@ -554,16 +517,15 @@ describe("Prime256v1SecurityTest", function () {
         });
     });
 
-    describe("#testDeterministicSignature()", function () {
-        it("should produce deterministic signatures", function () {
+    describe("#testSignaturesAreHedged()", function () {
+        it("should produce different signatures for the same message and key", function () {
             let privateKey = new PrivateKey(prime256v1);
             let message = "test message";
 
             let signature1 = Ecdsa.sign(message, privateKey);
             let signature2 = Ecdsa.sign(message, privateKey);
 
-            assert.equal(signature1.r.toString(16), signature2.r.toString(16));
-            assert.equal(signature1.s.toString(16), signature2.s.toString(16));
+            assert.ok(!signature1.r.eq(signature2.r) || !signature1.s.eq(signature2.s));
         });
     });
 
@@ -573,8 +535,8 @@ describe("Prime256v1SecurityTest", function () {
             let p256Key = new PrivateKey(prime256v1);
             let message = "cross-curve test";
 
-            let sig = Ecdsa.sign(message, k1Key);
-            assert.equal(Ecdsa.verify(message, sig, p256Key.publicKey()), false);
+            let signature = Ecdsa.sign(message, k1Key);
+            assert.equal(Ecdsa.verify(message, signature, p256Key.publicKey()), false);
         });
     });
 });
