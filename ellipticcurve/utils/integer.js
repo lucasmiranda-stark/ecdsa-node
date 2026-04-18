@@ -83,7 +83,7 @@ class RandomInteger {
          * protection against RNG failures.
          * Returns an iterator that yields BigInt nonce candidates.
          */
-        let orderBitLen = curve.N.bitLength().toJSNumber();
+        let orderBitLen = curve.nBitLength;
         let orderByteLen = (orderBitLen + 7) >> 3;
 
         let secretHex = secret.toString(16).padStart(orderByteLen * 2, "0");

@@ -12,13 +12,13 @@ class Ecdsa {
     static sign(message, privateKey, hashfunc = "sha256") {
         let curve = privateKey.curve;
         let byteMessage = crypto.createHash(hashfunc).update(message).digest();
-        let numberMessage = BinaryAscii.numberFromHex(byteMessage.toString("hex"), curve.N.bitLength().toJSNumber());
+        let numberMessage = BinaryAscii.numberFromHex(byteMessage.toString("hex"), curve.nBitLength);
 
         let r = BigInt(0), s = BigInt(0), randSignPoint = null;
         let kIterator = RandomInteger.rfc6979(byteMessage, privateKey.secret, curve, hashfunc);
         while (r.eq(0) || s.eq(0)) {
             let randNum = kIterator.next();
-            randSignPoint = Math.multiply(curve.G, randNum, curve.N, curve.A, curve.P);
+            randSignPoint = Math.multiplyGenerator(curve, randNum);
             r = modulo(randSignPoint.x, curve.N);
             s = modulo(numberMessage.add(r.multiply(privateKey.secret)).multiply(Math.inv(randNum, curve.N)), curve.N);
         }
@@ -37,7 +37,7 @@ class Ecdsa {
     static verify(message, signature, publicKey, hashfunc = "sha256") {
         let curve = publicKey.curve;
         let byteMessage = crypto.createHash(hashfunc).update(message).digest();
-        let numberMessage = BinaryAscii.numberFromHex(byteMessage.toString("hex"), curve.N.bitLength().toJSNumber());
+        let numberMessage = BinaryAscii.numberFromHex(byteMessage.toString("hex"), curve.nBitLength);
 
         let r = BigInt(signature.r);
         let s = BigInt(signature.s);

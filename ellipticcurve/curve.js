@@ -17,6 +17,7 @@ class CurveFp {
         this.B = B;
         this.P = P;
         this.N = N;
+        this.nBitLength = N.bitLength().toJSNumber();
         this.G = new Point(Gx, Gy);
         this.name = name;
         this.nistName = nistName;
