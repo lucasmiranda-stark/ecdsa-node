@@ -267,12 +267,20 @@ class Math {
         let px = p.x, py = p.y, pz = p.z;
         let qx = q.x, qy = q.y, qz = q.z;
 
-        let qz2 = modulo(qz.multiply(qz), P);
         let pz2 = modulo(pz.multiply(pz), P);
-        let U1 = modulo(px.multiply(qz2), P);
         let U2 = modulo(qx.multiply(pz2), P);
-        let S1 = modulo(py.multiply(qz2).multiply(qz), P);
         let S2 = modulo(qy.multiply(pz2).multiply(pz), P);
+
+        let U1, S1;
+        if (qz.eq(1)) {
+            // Mixed affine+Jacobian add: qz²=qz³=1 saves four multiplications.
+            U1 = px;
+            S1 = py;
+        } else {
+            let qz2 = modulo(qz.multiply(qz), P);
+            U1 = modulo(px.multiply(qz2), P);
+            S1 = modulo(py.multiply(qz2).multiply(qz), P);
+        }
 
         if (U1.eq(U2)) {
             if (S1.neq(S2)) {
@@ -288,7 +296,7 @@ class Math {
         let U1H2 = modulo(U1.multiply(H2), P);
         let nx = modulo(R.multiply(R).minus(H3).minus(U1H2.multiply(2)), P);
         let ny = modulo(R.multiply(U1H2.minus(nx)).minus(S1.multiply(H3)), P);
-        let nz = modulo(H.multiply(pz).multiply(qz), P);
+        let nz = qz.eq(1) ? modulo(H.multiply(pz), P) : modulo(H.multiply(pz).multiply(qz), P);
 
         return new Point(nx, ny, nz);
     }
