@@ -88,19 +88,29 @@ class Math {
         );
     }
 
-    static multiplyAndAdd(p1, n1, p2, n2, N, A, P) {
-        // Compute n1*p1 + n2*p2 using Shamir's trick (simultaneous double-and-add).
-        // Not constant-time — use only with public scalars (e.g. verification).
+    static multiplyAndAdd(p1, n1, p2, n2, N, A, P, curve=null) {
+        // Compute n1*p1 + n2*p2. If ``curve`` is given and exposes ``glvParams``
+        // (e.g. secp256k1), uses the GLV endomorphism to split both scalars into
+        // ~128-bit halves and run a 4-scalar simultaneous multi-exponentiation.
+        // Otherwise falls back to Shamir's trick with JSF. Not constant-time —
+        // use only with public scalars (e.g. verification).
 
         // :param p1: First point
         // :param n1: First scalar
         // :param p2: Second point
         // :param n2: Second scalar
-        // :param N: Order of the elliptic curve
-        // :param A: Coefficient of the first-order term of the equation Y^2 = X^3 + A*X + B (mod p)
-        // :param P: Prime number in the module of the equation Y^2 = X^3 + A*X + B (mod p)
+        // :param N: Order of the elliptic curve (ignored when ``curve`` is given)
+        // :param A: Coefficient of the first-order term (ignored when ``curve`` is given)
+        // :param P: Prime defining the field (ignored when ``curve`` is given)
+        // :param curve: Optional curve object; enables GLV if ``curve.glvParams`` is set
         // :return: Point n1*p1 + n2*p2
 
+        if (curve != null) {
+            N = curve.N; A = curve.A; P = curve.P;
+            if (curve.glvParams != null) {
+                return this._glvMultiplyAndAdd(p1, n1, p2, n2, curve);
+            }
+        }
         return this._fromJacobian(
             this._shamirMultiply(
                 this._toJacobian(p1), n1,
@@ -108,6 +118,84 @@ class Math {
                 N, A, P,
             ), P,
         );
+    }
+
+    static _glvMultiplyAndAdd(p1, n1, p2, n2, curve) {
+        // Compute n1*p1 + n2*p2 using the GLV endomorphism. Splits each 256-bit
+        // scalar into two ~128-bit scalars via k ≡ k1 + k2·λ (mod N), then runs
+        // a 4-scalar simultaneous double-and-add over (p1, φ(p1), p2, φ(p2))
+        // with a 16-entry precomputed table of subset sums. Halves the loop
+        // length versus the plain Shamir path.
+
+        let glv = curve.glvParams;
+        let N = curve.N, A = curve.A, P = curve.P;
+        let beta = glv.beta;
+
+        let [k1, k2] = this._glvDecompose(modulo(n1, N), glv, N);
+        let [k3, k4] = this._glvDecompose(modulo(n2, N), glv, N);
+
+        // Base points (affine, z=1) — φ((x,y)) = (β·x mod P, y).
+        let bases = [
+            new Point(p1.x, p1.y, BigInt(1)),
+            new Point(modulo(beta.multiply(p1.x), P), p1.y, BigInt(1)),
+            new Point(p2.x, p2.y, BigInt(1)),
+            new Point(modulo(beta.multiply(p2.x), P), p2.y, BigInt(1)),
+        ];
+        let scalars = [k1, k2, k3, k4];
+        for (let i = 0; i < 4; i++) {
+            if (scalars[i].lesser(0)) {
+                scalars[i] = scalars[i].negate();
+                bases[i] = new Point(bases[i].x, P.minus(bases[i].y), BigInt(1));
+            }
+        }
+
+        // Precompute table[idx] = sum of bases[i] selected by bits of idx.
+        let table = new Array(16);
+        table[0] = new Point(BigInt(0), BigInt(0), BigInt(1));
+        for (let idx = 1; idx < 16; idx++) {
+            let low = idx & -idx;
+            let i = 0;
+            let tmp = low;
+            while (tmp > 1) { tmp >>= 1; i++; }
+            table[idx] = this._jacobianAdd(table[idx ^ low], bases[i], A, P);
+        }
+
+        let maxLen = 0;
+        for (let i = 0; i < 4; i++) {
+            let bl = scalars[i].bitLength().toJSNumber();
+            if (bl > maxLen) maxLen = bl;
+        }
+
+        let r = new Point(BigInt(0), BigInt(0), BigInt(1));
+        let s0 = scalars[0], s1 = scalars[1], s2 = scalars[2], s3 = scalars[3];
+        for (let bit = maxLen - 1; bit >= 0; bit--) {
+            r = this._jacobianDouble(r, A, P);
+            let idx =
+                s0.shiftRight(bit).and(1).toJSNumber()
+                | (s1.shiftRight(bit).and(1).toJSNumber() << 1)
+                | (s2.shiftRight(bit).and(1).toJSNumber() << 2)
+                | (s3.shiftRight(bit).and(1).toJSNumber() << 3);
+            if (idx) {
+                r = this._jacobianAdd(r, table[idx], A, P);
+            }
+        }
+
+        return this._fromJacobian(r, P);
+    }
+
+    static _glvDecompose(k, glv, N) {
+        // Decompose k into (k1, k2) with k ≡ k1 + k2·λ (mod N) and
+        // |k1|, |k2| ~ √N. Babai rounding against the precomputed basis
+        // {(a1, b1), (a2, b2)}; k1 and k2 may be negative.
+
+        let a1 = glv.a1, b1 = glv.b1, a2 = glv.a2, b2 = glv.b2;
+        let halfN = N.shiftRight(1);
+        // dividends are non-negative, so .divide (truncate) equals floor.
+        let c1 = b2.multiply(k).add(halfN).divide(N);
+        let c2 = b1.negate().multiply(k).add(halfN).divide(N);
+        let k1 = k.minus(c1.multiply(a1)).minus(c2.multiply(a2));
+        let k2 = c1.negate().multiply(b1).minus(c2.multiply(b2));
+        return [k1, k2];
     }
 
     static multiplyGenerator(curve, n) {

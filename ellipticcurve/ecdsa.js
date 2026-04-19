@@ -55,7 +55,7 @@ class Ecdsa {
         let v = Math.multiplyAndAdd(
             curve.G, modulo(numberMessage.multiply(inv), curve.N),
             publicKey.point, modulo(r.multiply(inv), curve.N),
-            curve.N, curve.A, curve.P,
+            curve.N, curve.A, curve.P, curve,
         );
         if (v.isAtInfinity()) {
             return false;
