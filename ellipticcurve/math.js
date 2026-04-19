@@ -359,8 +359,10 @@ class Math {
     }
 
     static _shamirMultiply(jp1, n1, jp2, n2, N, A, P) {
-        // Compute n1*p1 + n2*p2 using Shamir's trick (simultaneous double-and-add).
-        // Not constant-time — use only with public scalars (e.g. verification).
+        // Compute n1*p1 + n2*p2 using Shamir's trick with Joint Sparse Form
+        // (Solinas 2001). JSF picks signed digits in {-1, 0, 1} so at most ~l/2
+        // digit pairs are non-zero, versus ~3l/4 for the raw binary form. Not
+        // constant-time — use only with public scalars (e.g. verification).
 
         // :param jp1: First point in Jacobian coordinates
         // :param n1: First scalar
@@ -378,23 +380,82 @@ class Math {
             n2 = modulo(n2, N);
         }
 
+        if (n1.eq(0) && n2.eq(0)) {
+            return new Point(BigInt(0), BigInt(0), BigInt(1));
+        }
+
+        let neg = (pt) => new Point(pt.x, pt.y.eq(0) ? BigInt(0) : P.minus(pt.y), pt.z);
+
         let jp1p2 = this._jacobianAdd(jp1, jp2, A, P);
+        let jp1mp2 = this._jacobianAdd(jp1, neg(jp2), A, P);
+        let addTable = {
+            "1,0": jp1,
+            "-1,0": neg(jp1),
+            "0,1": jp2,
+            "0,-1": neg(jp2),
+            "1,1": jp1p2,
+            "-1,-1": neg(jp1p2),
+            "1,-1": jp1mp2,
+            "-1,1": neg(jp1mp2),
+        };
 
-        let l = global.Math.max(n1.bitLength().toJSNumber(), n2.bitLength().toJSNumber());
+        let digits = this._jsfDigits(n1, n2);
         let r = new Point(BigInt(0), BigInt(0), BigInt(1));
-
-        for (let i = l - 1; i >= 0; i--) {
+        for (let idx = 0; idx < digits.length; idx++) {
+            let u0 = digits[idx][0];
+            let u1 = digits[idx][1];
             r = this._jacobianDouble(r, A, P);
-            let b1 = n1.shiftRight(i).and(1).toJSNumber();
-            let b2 = n2.shiftRight(i).and(1).toJSNumber();
-            if (b1) {
-                r = this._jacobianAdd(r, b2 ? jp1p2 : jp1, A, P);
-            } else if (b2) {
-                r = this._jacobianAdd(r, jp2, A, P);
+            if (u0 || u1) {
+                r = this._jacobianAdd(r, addTable[u0 + "," + u1], A, P);
             }
         }
 
         return r;
+    }
+
+    static _jsfDigits(k0, k1) {
+        // Joint Sparse Form of (k0, k1): list of signed-digit pairs [u0, u1] in
+        // {-1, 0, 1}, ordered MSB-first. At most one of any two consecutive pairs
+        // is non-zero, giving density ~1/2 instead of ~3/4 from raw binary.
+
+        let digits = [];
+        let d0 = 0;
+        let d1 = 0;
+        while (!k0.add(d0).eq(0) || !k1.add(d1).eq(0)) {
+            let a0 = k0.add(d0);
+            let a1 = k1.add(d1);
+            let u0;
+            if (a0.and(1).eq(1)) {
+                u0 = a0.and(3).eq(1) ? 1 : -1;
+                let a0mod8 = a0.and(7).toJSNumber();
+                if ((a0mod8 === 3 || a0mod8 === 5) && a1.and(3).eq(2)) {
+                    u0 = -u0;
+                }
+            } else {
+                u0 = 0;
+            }
+            let u1;
+            if (a1.and(1).eq(1)) {
+                u1 = a1.and(3).eq(1) ? 1 : -1;
+                let a1mod8 = a1.and(7).toJSNumber();
+                if ((a1mod8 === 3 || a1mod8 === 5) && a0.and(3).eq(2)) {
+                    u1 = -u1;
+                }
+            } else {
+                u1 = 0;
+            }
+            digits.push([u0, u1]);
+            if (2 * d0 === 1 + u0) {
+                d0 = 1 - d0;
+            }
+            if (2 * d1 === 1 + u1) {
+                d1 = 1 - d1;
+            }
+            k0 = k0.shiftRight(1);
+            k1 = k1.shiftRight(1);
+        }
+        digits.reverse();
+        return digits;
     }
 }
 
