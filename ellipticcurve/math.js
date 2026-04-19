@@ -3,9 +3,6 @@ const modulo = require("./utils/integer").modulo;
 const BigInt = require("big-integer");
 
 
-const _GENERATOR_WINDOW_BITS = 4;
-
-
 class Math {
 
     static modularSquareRoot(value, prime) {
@@ -114,10 +111,11 @@ class Math {
     }
 
     static multiplyGenerator(curve, n) {
-        // Fast scalar multiplication n*G where G is the curve generator, using
-        // a precomputed window table (2^w-ary method). Roughly 2-3x faster
-        // than variable-base multiplication because doublings stay cheap and
-        // additions use pre-stored multiples of G.
+        // Fast scalar multiplication n*G using a precomputed affine table of
+        // powers-of-two multiples of G and the width-2 NAF of n. Every non-zero
+        // NAF digit triggers one mixed add and zero doublings, trading the ~256
+        // doublings of a windowed method for ~86 adds on average — a large net
+        // reduction in field multiplications for 256-bit scalars.
 
         // :param curve: Elliptic curve with generator G
         // :param n: Scalar multiplier
@@ -130,40 +128,58 @@ class Math {
             return new Point(BigInt(0), BigInt(0), BigInt(0));
         }
 
-        let table = this._generatorTable(curve);
-        let w = _GENERATOR_WINDOW_BITS;
-        let mask = (1 << w) - 1;
+        let table = this._generatorPowersTable(curve);
         let A = curve.A, P = curve.P;
 
-        // Jacobian infinity (y=0 triggers early-return in add)
         let r = new Point(BigInt(0), BigInt(0), BigInt(1));
-        let startBit = global.Math.floor((curve.nBitLength - 1) / w) * w;
-        for (let bit = startBit; bit >= 0; bit -= w) {
-            for (let j = 0; j < w; j++) {
-                r = this._jacobianDouble(r, A, P);
+        let i = 0;
+        let k = n;
+        while (k.greater(0)) {
+            if (k.and(1).eq(1)) {
+                let digit = 2 - k.and(3).toJSNumber();  // -1 or +1
+                k = k.minus(digit);
+                let g = table[i];
+                if (digit === 1) {
+                    r = this._jacobianAdd(r, g, A, P);
+                } else {
+                    r = this._jacobianAdd(r, new Point(g.x, P.minus(g.y), BigInt(1)), A, P);
+                }
             }
-            let window = n.shiftRight(bit).and(mask).toJSNumber();
-            if (window) {
-                r = this._jacobianAdd(r, table[window], A, P);
-            }
+            k = k.shiftRight(1);
+            i += 1;
         }
         return this._fromJacobian(r, P);
     }
 
-    static _generatorTable(curve) {
-        let cached = curve._generatorTable_;
+    static _generatorPowersTable(curve) {
+        // Build [G, 2G, 4G, ..., 2^nBitLength * G] in affine (z=1) form, so each
+        // add in multiplyGenerator hits the mixed-add fast path.
+
+        let cached = curve._generatorPowersTable_;
         if (cached) {
             return cached;
         }
-        let w = _GENERATOR_WINDOW_BITS;
         let A = curve.A, P = curve.P;
-        let G = new Point(curve.G.x, curve.G.y, BigInt(1));
-        let table = [new Point(BigInt(0), BigInt(0), BigInt(1)), G];
-        let entries = (1 << w) - 2;
-        for (let i = 0; i < entries; i++) {
-            table.push(this._jacobianAdd(table[table.length - 1], G, A, P));
+        let current = new Point(curve.G.x, curve.G.y, BigInt(1));
+        let table = [current];
+        // NAF of an nBitLength-bit scalar can be up to nBitLength+1 digits.
+        for (let i = 0; i < curve.nBitLength; i++) {
+            let doubled = this._jacobianDouble(current, A, P);
+            if (doubled.y.eq(0)) {
+                current = doubled;
+            } else {
+                let zInv = this.inv(doubled.z, P);
+                let zInv2 = modulo(zInv.multiply(zInv), P);
+                let zInv3 = modulo(zInv2.multiply(zInv), P);
+                current = new Point(
+                    modulo(doubled.x.multiply(zInv2), P),
+                    modulo(doubled.y.multiply(zInv3), P),
+                    BigInt(1),
+                );
+            }
+            table.push(current);
         }
-        curve._generatorTable_ = table;
+        curve._generatorPowersTable_ = table;
         return table;
     }
 
