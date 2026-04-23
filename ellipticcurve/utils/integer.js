@@ -2,6 +2,7 @@
 
 const BigInt = require("big-integer");
 const crypto = require("crypto");
+const BinaryAscii = require("./binary");
 
 
 function modulo(x, n) {
@@ -16,18 +17,6 @@ function modulo(x, n) {
 
 
 function calculateParameters(range) {
-	/* This does the equivalent of:
-	 *
-	 *    bitsNeeded = Math.ceil(Math.log2(range));
-	 *    bytesNeeded = Math.ceil(bitsNeeded / 8);
-	 *    mask = Math.pow(2, bitsNeeded) - 1;
-	 *
-	 * ... however, it implements it as bitwise operations, to sidestep any
-	 * possible implementation errors regarding floating point numbers in
-	 * JavaScript runtimes. This is an easier solution than assessing each
-	 * runtime and architecture individually.
-	 */
-
 	let bitsNeeded = 0;
 	let bytesNeeded = 0;
 	let mask = BigInt(1);
@@ -38,76 +27,118 @@ function calculateParameters(range) {
 		}
 
         bitsNeeded += 1;
-        mask = mask.shiftLeft(1).or(1); /* 0x00001111 -> 0x00011111 */
+        mask = mask.shiftLeft(1).or(1);
 
-        range = range.shiftRight(1);  /* 0x01000000 -> 0x00100000 */
+        range = range.shiftRight(1);
 	}
 
 	return {bitsNeeded, bytesNeeded, mask};
 }
 
 
-function secureRandomNumber(minimum, maximum) { // bigint, bigint
-    if (crypto == null || crypto.randomBytes == null) {
-        throw new Error("No suitable random number generator available. Ensure that your runtime is linked against OpenSSL (or an equivalent) correctly.");
-    };
+class RandomInteger {
 
-    if (maximum.lesserOrEquals(minimum)) {
-        throw new Error("The maximum value must be higher than the minimum value.")
-    };
+    static between(min, max) {
+        /**
+         * Return integer x in the range: min <= x <= max
+         *
+         * :param min: minimum value of the integer
+         * :param max: maximum value of the integer
+         * :return:
+         */
+        if (crypto == null || crypto.randomBytes == null) {
+            throw new Error("No suitable random number generator available.");
+        }
 
-    /* We hardcode the values for the following:
-        *
-        *   https://developer.mozilla.org/en/docs/Web/JavaScript/Reference/Global_Objects/Number/MIN_SAFE_INTEGER
-        *   https://developer.mozilla.org/en/docs/Web/JavaScript/Reference/Global_Objects/Number/MAX_SAFE_INTEGER
-        *
-        * ... as Babel does not appear to transpile them, despite being ES6.
-        */
+        if (max.lesserOrEquals(min)) {
+            throw new Error("The maximum value must be higher than the minimum value.");
+        }
 
-    let range = maximum.minus(minimum);
+        let range = max.minus(min);
 
-    let {bitsNeeded, bytesNeeded, mask} = calculateParameters(range);
+        let {bitsNeeded, bytesNeeded, mask} = calculateParameters(range);
 
-    let randomBytes = crypto.randomBytes(bytesNeeded);
+        let randomBytes = crypto.randomBytes(bytesNeeded);
 
-    var randomValue = BigInt(0);
+        let randomValue = BigInt(0);
 
-    /* Turn the random bytes into an integer, using bitwise operations. */
-    for (let i = BigInt(0); i.lesser(bytesNeeded); i = i.add(1)) {
-        randomValue = randomValue.or(BigInt(randomBytes[i]).shiftLeft(BigInt(8).multiply(i)));
+        for (let i = BigInt(0); i.lesser(bytesNeeded); i = i.add(1)) {
+            randomValue = randomValue.or(BigInt(randomBytes[i]).shiftLeft(BigInt(8).multiply(i)));
+        }
+
+        randomValue = randomValue.and(mask);
+
+        if (randomValue.lesserOrEquals(range)) {
+            return min.add(randomValue);
+        }
+
+        return this.between(min, max);
     }
 
-    /* We apply the mask to reduce the amount of attempts we might need
-        * to make to get a number that is in range. This is somewhat like
-        * the commonly used 'modulo trick', but without the bias:
-        *
-        *   "Let's say you invoke secure_rand(0, 60). When the other code
-        *    generates a random integer, you might get 243. If you take
-        *    (243 & 63)-- noting that the mask is 63-- you get 51. Since
-        *    51 is less than 60, we can return this without bias. If we
-        *    got 255, then 255 & 63 is 63. 63 > 60, so we try again.
-        *
-        *    The purpose of the mask is to reduce the number of random
-        *    numbers discarded for the sake of ensuring an unbiased
-        *    distribution. In the example above, 243 would discard, but
-        *    (243 & 63) is in the range of 0 and 60."
-        *
-        *   (Source: Scott Arciszewski)
-        */
+    static rfc6979(hashBytes, secret, curve, hashfunc) {
+        /**
+         * Generate nonce values via hedged RFC 6979: deterministic k derivation
+         * with fresh random entropy mixed into K-init (RFC 6979 §3.6). Same
+         * message + key yield different signatures, while preserving RFC 6979's
+         * protection against RNG failures.
+         * Returns an iterator that yields BigInt nonce candidates.
+         */
+        let orderBitLen = curve.nBitLength;
+        let orderByteLen = (orderBitLen + 7) >> 3;
 
-    randomValue = randomValue.and(mask);
+        let secretHex = secret.toString(16).padStart(orderByteLen * 2, "0");
+        let secretBytes = Buffer.from(secretHex, "hex");
 
-    if (randomValue.lesserOrEquals(range)) {
-        /* We've been working with 0 as a starting point, so we need to
-            * add the `minimum` here. */
-        return minimum.add(randomValue);
+        let hashReduced = modulo(BinaryAscii.numberFromHex(hashBytes.toString("hex"), orderBitLen), curve.N);
+        let hashHex = hashReduced.toString(16).padStart(orderByteLen * 2, "0");
+        let hashOctets = Buffer.from(hashHex, "hex");
+
+        let extraEntropy = crypto.randomBytes(orderByteLen);
+
+        let hLen = _hashDigestSize(hashfunc);
+        let V = Buffer.alloc(hLen, 0x01);
+        let K = Buffer.alloc(hLen, 0x00);
+
+        K = _hmac(hashfunc, K, Buffer.concat([V, Buffer.from([0x00]), secretBytes, hashOctets, extraEntropy]));
+        V = _hmac(hashfunc, K, V);
+        K = _hmac(hashfunc, K, Buffer.concat([V, Buffer.from([0x01]), secretBytes, hashOctets, extraEntropy]));
+        V = _hmac(hashfunc, K, V);
+
+        return {
+            next: function () {
+                while (true) {
+                    let T = Buffer.alloc(0);
+                    while (T.length * 8 < orderBitLen) {
+                        V = _hmac(hashfunc, K, V);
+                        T = Buffer.concat([T, V]);
+                    }
+
+                    let k = BinaryAscii.numberFromHex(T.toString("hex"), orderBitLen);
+
+                    if (k.greaterOrEquals(1) && k.lesserOrEquals(curve.N.minus(1))) {
+                        return k;
+                    }
+
+                    K = _hmac(hashfunc, K, Buffer.concat([V, Buffer.from([0x00])]));
+                    V = _hmac(hashfunc, K, V);
+                }
+            }
+        };
     }
-
-    /* Outside of the acceptable range, throw it away and try again.
-        * We don't try any modulo tricks, as this would introduce bias. */
-    return secureRandomNumber(minimum, maximum);
-};
+}
 
 
-exports.between = secureRandomNumber;
+function _hmac(hashfunc, key, data) {
+    let alg = typeof hashfunc === "string" ? hashfunc : "sha256";
+    return crypto.createHmac(alg, key).update(data).digest();
+}
+
+
+function _hashDigestSize(hashfunc) {
+    let alg = typeof hashfunc === "string" ? hashfunc : "sha256";
+    return crypto.createHash(alg).digest().length;
+}
+
+
+exports.RandomInteger = RandomInteger;
 exports.modulo = modulo;
