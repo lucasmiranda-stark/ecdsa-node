@@ -14,6 +14,10 @@ Given a version number MAJOR.MINOR.PATCH, increment:
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-05-29
+### Changed
+- Security changes
+
 ## [1.1.5] - 2022-08-31
 ### Fixed
 - unset variables on math and der files
