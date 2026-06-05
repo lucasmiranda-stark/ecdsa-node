@@ -210,6 +210,53 @@ console.log(signature.toBase64());
 
 [Stark Bank]: https://starkbank.com
 
+### Deployment
+
+Publishing to npm is automated via the `Deploy to npm` GitHub Actions workflow
+(`.github/workflows/deploy-npm.yml`). It is **not** triggered by pushes or tags —
+it runs only when an external approval flow ("approve flux") fires a
+`repository_dispatch` event after a pull request has been approved.
+
+The approval flow calls the GitHub REST API and must include the head commit SHA
+of the approved PR, so the workflow publishes that exact commit:
+
+```
+POST /repos/<owner>/<repo>/dispatches
+Authorization: Bearer <token>
+Accept: application/vnd.github+json
+
+{
+  "event_type": "deploy",
+  "client_payload": {
+    "pr": 42,
+    "sha": "<head commit SHA of the approved PR>"
+  }
+}
+```
+
+Authentication uses npm **Trusted Publishing** (OIDC) — there is no `NPM_TOKEN`
+secret. npm trusts this repo's workflow via its OIDC identity and issues
+short-lived publish credentials at run time.
+
+Setup requirements:
+
+- **Configure the trusted publisher on npm**: on npmjs.com, open the package's
+  `Settings → Trusted Publisher`, choose GitHub Actions, and enter the
+  organization/user, repository, and the workflow filename `deploy-npm.yml`
+  (plus the environment name if you add one).
+- **First publish needs a token**: npm requires the package to already exist
+  before a trusted publisher can be configured. Publish the initial version once
+  with a short-lived token (then delete it); every publish after that is tokenless.
+- **Bump the version first**: the approved PR must bump `version` in
+  `package.json` (and add a `CHANGELOG.md` entry), otherwise `npm publish` fails
+  because the version already exists.
+- **Provenance**: emitted automatically by Trusted Publishing. It requires the
+  repository to be public and `package.json`'s `repository.url` to match the repo
+  that runs the workflow.
+
+A throwaway approval service that exercises this trigger end-to-end lives in
+[`deploy-approver/`](deploy-approver/README.md).
+
 ### Run unit tests
 
 ```sh

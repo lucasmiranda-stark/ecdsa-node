@@ -14,6 +14,11 @@ Given a version number MAJOR.MINOR.PATCH, increment:
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-06-05
+### Added
+- GitHub Actions workflow to publish to npm via Trusted Publishing (OIDC),
+  triggered by an external approval flow through `repository_dispatch`.
+
 ## [1.2.0] - 2026-05-29
 ### Changed
 - Security changes

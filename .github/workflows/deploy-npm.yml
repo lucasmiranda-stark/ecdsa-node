@@ -1,0 +1,74 @@
+name: Deploy to npm
+
+# Publishes starkbank-ecdsa to the public npm registry.
+#
+# This workflow is NOT triggered by pushes or tags. It is triggered exclusively
+# by an external approval flow ("approve flux") that calls the GitHub REST API
+# with a `repository_dispatch` event once a pull request has been approved.
+#
+# The external system must send the head commit SHA of the approved PR so we
+# publish that exact code. Example request the approval flow sends:
+#
+#   POST /repos/{owner}/{repo}/dispatches
+#   Authorization: Bearer <token with "contents: write" / actions access>
+#   Accept: application/vnd.github+json
+#   {
+#     "event_type": "deploy",
+#     "client_payload": {
+#       "pr": 42,
+#       "sha": "<head commit SHA of the approved PR>"
+#     }
+#   }
+on:
+  repository_dispatch:
+    types: [deploy]
+
+# id-token: write  -> required for npm Trusted Publishing (OIDC). npm exchanges
+#                     this token for short-lived publish credentials, so no
+#                     NPM_TOKEN secret is needed. Provenance is emitted automatically.
+# contents: read   -> required to checkout the approved commit.
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      # Fail fast if the dispatch did not carry the commit we are meant to ship.
+      - name: Validate dispatch payload
+        env:
+          SHA: ${{ github.event.client_payload.sha }}
+          PR: ${{ github.event.client_payload.pr }}
+        run: |
+          if [ -z "$SHA" ]; then
+            echo "::error::client_payload.sha is required (head commit of the approved PR)."
+            exit 1
+          fi
+          echo "Deploying PR #${PR:-unknown} at commit $SHA"
+
+      # Checkout the exact approved commit, not the default branch.
+      - name: Checkout approved commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.client_payload.sha }}
+
+      # Trusted Publishing requires Node >= 22.14.0; node-version 22 satisfies it.
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: 'https://registry.npmjs.org'
+
+      # Trusted Publishing requires npm CLI >= 11.5.1; Node 22 ships npm 10, so upgrade.
+      - name: Upgrade npm
+        run: npm install -g npm@latest
+
+      - name: Install dependencies
+        run: npm ci
+
+      # No NODE_AUTH_TOKEN: npm authenticates via OIDC (Trusted Publishing) using the
+      # id-token permission above. Provenance is generated automatically; --provenance
+      # is kept explicit because it must succeed for the publish to be accepted.
+      - name: Publish to npm
+        run: npm publish --provenance
