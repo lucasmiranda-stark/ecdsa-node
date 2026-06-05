@@ -14,6 +14,11 @@ Given a version number MAJOR.MINOR.PATCH, increment:
 
 ## [Unreleased]
 
+## [1.3.1] - 2026-06-05
+### Fixed
+- Upgrade actions/checkout and actions/setup-node to v6 (Node 24 runtime),
+  removing the deprecated Node.js 20 actions warning.
+
 ## [1.3.0] - 2026-06-05
 ### Added
 - GitHub Actions workflow to publish to npm via Trusted Publishing (OIDC),
